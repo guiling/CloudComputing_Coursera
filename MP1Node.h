@@ -31,6 +31,7 @@
 enum MsgTypes{
     JOINREQ,
     JOINREP,
+    PING,
     DUMMYLASTMSGTYPE
 };
 
@@ -42,6 +43,14 @@ enum MsgTypes{
 typedef struct MessageHdr {
 	enum MsgTypes msgType;
 }MessageHdr;
+
+typedef struct MembershipInfo
+{
+	int id;
+	short port;
+	long heartbeat;
+	long timestamp;
+}MembershipInfo;
 
 /**
  * CLASS NAME: MP1Node
@@ -55,6 +64,16 @@ private:
 	Params *par;
 	Member *memberNode;
 	char NULLADDR[6];
+
+private:
+	void addToMembershipList(char * newMemberAddress, long heartbeat, int timestamp);
+	void addToMembershipList(int id, int port, long heartbeat, int timestamp);
+	void sendSelfMembershipMessage(char * targetAddress, MsgTypes type);
+	bool isSameAddress(int id, short port);
+	void updateMembershipList(MessageHdr * data, int size);
+	bool isSameMemberInGroup(MemberListEntry *listEntry, MembershipInfo * reveivedMembershipInfo);
+	Address* constructAddress(char * address);
+	Address* constructAddress(int id, int port);
 
 public:
 	MP1Node(Member *, Params *, EmulNet *, Log *, Address *);

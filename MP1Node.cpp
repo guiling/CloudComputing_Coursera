@@ -96,9 +96,6 @@ int MP1Node::initThisNode(Address *joinaddr) {
 	/*
 	 * This function is partially implemented and may require changes
 	 */
-	int id = *(int*)(&memberNode->addr.addr);
-	int port = *(short*)(&memberNode->addr.addr[4]);
-
 	memberNode->bFailed = false;
 	memberNode->inited = true;
 	memberNode->inGroup = false;
@@ -129,6 +126,8 @@ int MP1Node::introduceSelfToGroup(Address *joinaddr) {
         log->LOG(&memberNode->addr, "Starting up group...");
 #endif
         memberNode->inGroup = true;
+        addToMembershipList(memberNode->addr.addr, memberNode->heartbeat, par->globaltime);
+
     }
     else {
         size_t msgsize = sizeof(MessageHdr) + sizeof(joinaddr->addr) + sizeof(long) + 1;
@@ -160,9 +159,10 @@ int MP1Node::introduceSelfToGroup(Address *joinaddr) {
  * DESCRIPTION: Wind up this node and clean up state
  */
 int MP1Node::finishUpThisNode(){
-   /*
-    * Your code goes here
-    */
+
+    delete memberNode;
+    memberNode = NULL;
+    return 1;
 }
 
 /**
@@ -215,9 +215,170 @@ void MP1Node::checkMessages() {
  * DESCRIPTION: Message handler for different message types
  */
 bool MP1Node::recvCallBack(void *env, char *data, int size ) {
-	/*
-	 * Your code goes here
-	 */
+	
+    MessageHdr * messageType = (MessageHdr *) data;
+    if(messageType->msgType == JOINREQ)
+    {
+       
+        long heartbeat = 0;
+        char * addr = (char *) malloc(sizeof(memberNode->addr.addr));
+
+        memcpy(addr,(char*)(messageType+1), sizeof(memberNode->addr.addr));
+        memcpy(&heartbeat, (char *)(messageType+1) + 1 + sizeof(memberNode->addr.addr), sizeof(long));
+        addToMembershipList(addr, heartbeat, par->globaltime);
+
+        #ifdef DEBUGLOG
+
+        Address *joinedAddress = constructAddress(addr);
+        log->logNodeAdd(&memberNode->addr, joinedAddress);
+
+        // char s[1024];
+        // sprintf(s, "heartbeat : %ld", heartbeat);
+        // log->LOG(&memberNode->addr, s);
+        #endif
+        // Send Join Reply message and all its membership info
+        sendSelfMembershipMessage(addr, JOINREP);
+
+        free(addr);
+    }
+    else if(messageType->msgType == JOINREP)
+    {
+        memberNode->inGroup = true;
+        updateMembershipList(messageType, size);
+
+    }
+    else if(messageType->msgType == PING)
+    {
+        updateMembershipList(messageType, size);
+    }
+
+    return true;
+}
+
+void MP1Node::updateMembershipList(MessageHdr * data, int size)
+{
+    int readMsgSize = sizeof(MessageHdr);
+    MembershipInfo * newMembershipInfo = (MembershipInfo *) malloc(sizeof(MembershipInfo));
+    
+    while(readMsgSize < size)
+    {
+        memcpy(newMembershipInfo, (char*)data + readMsgSize, sizeof(MembershipInfo));
+
+        // check whether the reveived item in self membership
+        bool isnew = true;
+        int memberNumber = memberNode->memberList.size();
+
+        for (int i = 0; i < memberNumber; i++)
+        {
+            if(isSameMemberInGroup(&memberNode->memberList[i], newMembershipInfo))
+            {
+                isnew =false;
+                if(newMembershipInfo->heartbeat > memberNode->memberList[i].heartbeat)
+                {
+                    memberNode->memberList[i].heartbeat = newMembershipInfo->heartbeat;
+                    memberNode->memberList[i].timestamp = newMembershipInfo->timestamp ;
+                }
+
+                break;
+            }
+        }
+
+        if(isnew)
+        {
+            addToMembershipList(newMembershipInfo->id,
+                                newMembershipInfo->port,
+                                newMembershipInfo->heartbeat,
+                                newMembershipInfo->timestamp);
+
+            if(!isSameAddress(newMembershipInfo->id, newMembershipInfo->port))
+            {
+                
+                #ifdef DEBUGLOG
+                
+                Address *joinedAddress = constructAddress(newMembershipInfo->id, newMembershipInfo->port);
+                log->logNodeAdd(&memberNode->addr, joinedAddress);
+                
+                #endif
+            }
+        }
+        
+        readMsgSize = readMsgSize + sizeof(MembershipInfo);
+    }
+
+    free(newMembershipInfo);
+
+}
+
+bool MP1Node::isSameMemberInGroup(MemberListEntry *listEntry, MembershipInfo * reveivedMembershipInfo)
+{
+    if(reveivedMembershipInfo->id == listEntry->id && reveivedMembershipInfo->port == listEntry->port)
+    {
+        return true;
+    }
+
+    return false;
+
+}
+
+void MP1Node::addToMembershipList(char * newMemberAddress, long heartbeat, int timestamp)
+{
+    int id = 0;
+    short port = 0;
+    memcpy(&id, &newMemberAddress[0], sizeof(int));
+    memcpy(&port, &newMemberAddress[4], sizeof(short));
+    addToMembershipList(id, port, heartbeat, timestamp);
+}
+
+void MP1Node::addToMembershipList(int id, int port, long heartbeat, int timestamp)
+{
+    MemberListEntry memberEntry(id, port, heartbeat, timestamp);
+    memberNode->memberList.push_back(memberEntry);
+    memberNode->nnb ++ ;
+}
+
+void MP1Node::sendSelfMembershipMessage(char * targetAddress, MsgTypes type)
+{
+    MessageHdr *msg;
+    int memberNumber = memberNode->memberList.size();
+    
+    int sendNumber = 0;
+    for(int i = 0; i < memberNumber;i++)
+    {
+        if(par->globaltime - memberNode->memberList[i].timestamp > TFAIL)
+        {
+            continue;
+        }
+
+        sendNumber ++;
+    }
+
+    size_t size = sizeof(MembershipInfo) * sendNumber + sizeof(MessageHdr);
+
+    msg = (MessageHdr *)malloc(size * sizeof(char));
+    msg->msgType = type;
+
+    int sendCount = 0;
+    for (int i = 0; i < memberNumber; i++)
+    {
+        if(par->globaltime - memberNode->memberList[i].timestamp > TFAIL)
+        {
+            continue;
+        }
+
+        MembershipInfo membershipInfo;
+        membershipInfo.id = memberNode->memberList[i].id;
+        membershipInfo.port = memberNode->memberList[i].port;
+        membershipInfo.heartbeat = memberNode->memberList[i].heartbeat;
+        membershipInfo.timestamp = memberNode->memberList[i].timestamp;
+        memcpy((char*)(msg + 1) + sizeof(MembershipInfo) * sendCount, &membershipInfo,sizeof(MembershipInfo));  
+
+        sendCount ++; 
+    }
+
+    Address *toAddress = constructAddress(targetAddress);
+    emulNet->ENsend(&memberNode->addr, toAddress, (char *)msg, size);
+
+    free(msg);
 }
 
 /**
@@ -229,11 +390,72 @@ bool MP1Node::recvCallBack(void *env, char *data, int size ) {
  */
 void MP1Node::nodeLoopOps() {
 
-	/*
-	 * Your code goes here
-	 */
+    // increment node heartbeat
+    memberNode->heartbeat ++;
+
+    // find self note in memberentry list, then increment its heartbeat
+    int memberNumber = memberNode->memberList.size();
+
+    for (int i = 0; i < memberNumber; i++)
+    {
+        if(isSameAddress(memberNode->memberList[i].id, memberNode->memberList[i].port))
+        {
+            memberNode->memberList[i].heartbeat ++;
+            memberNode->memberList[i].timestamp = par->globaltime;
+            break;
+        }
+
+    }
+
+    // check if any node hasn't responded within a timeout period and then delete
+    for(memberNode->myPos = memberNode->memberList.begin(); memberNode->myPos != memberNode->memberList.end();)
+    {
+        if( par->globaltime - (*(memberNode->myPos)).timestamp > TREMOVE)
+        {
+            #ifdef DEBUGLOG
+                Address *removedAddress = constructAddress((*(memberNode->myPos)).id, (*(memberNode->myPos)).port);
+                log->logNodeRemove(&memberNode->addr, removedAddress);
+            #endif
+
+            memberNode->myPos = memberNode->memberList.erase(memberNode->myPos);
+        }
+        else
+        {
+            (memberNode->myPos)++;
+        }
+
+    }
+
+    // use gossip-style membership protocal to send self-membership info to other members in group randomly
+    double possibility = 0.4;
+    memberNumber = memberNode->memberList.size();
+    for (int i = 0; i < memberNumber; i++)
+    {
+        // do not send self message info to self
+        if(!isSameAddress(memberNode->memberList[i].id, memberNode->memberList[i].port))
+        {
+            if((rand()%100 * 1.0) /100 > possibility )
+            {
+                Address *gossipAddress = constructAddress(memberNode->memberList[i].id, memberNode->memberList[i].port);
+                sendSelfMembershipMessage((*gossipAddress).addr, PING);
+
+                //#ifdef DEBUGLOG
+                //string source = memberNode->addr.getAddress();
+                //string target = gossipAddress.getAddress();
+                //cout << "Send Ping message from" <<  source << "to" << target << endl;
+                //#endif
+            }
+        }
+
+    }
 
     return;
+}
+
+bool MP1Node::isSameAddress(int id, short port)
+{
+    Address *address = constructAddress(id, port);
+    return (memcmp(memberNode->addr.addr,address, 6) == 0 ? 1 : 0);   
 }
 
 /**
@@ -278,4 +500,19 @@ void MP1Node::printAddress(Address *addr)
 {
     printf("%d.%d.%d.%d:%d \n",  addr->addr[0],addr->addr[1],addr->addr[2],
                                                        addr->addr[3], *(short*)&addr->addr[4]) ;    
+}
+
+Address* MP1Node::constructAddress(char * address)
+{
+    Address *pAddr =  new Address();
+    memcpy(pAddr->addr, address, sizeof(pAddr->addr));
+    return pAddr;
+}
+
+Address* MP1Node::constructAddress(int id, int port)
+{
+    Address *pAddr =  new Address();
+    memcpy(&pAddr->addr[0], &id, sizeof(int));
+    memcpy(&pAddr->addr[4], &port, sizeof(short));
+    return pAddr;
 }
