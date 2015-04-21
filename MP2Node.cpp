@@ -38,6 +38,7 @@ void MP2Node::updateRing() {
 	/*
 	 * Implement this. Parts of it are already implemented
 	 */
+
 	vector<Node> curMemList;
 	bool change = false;
 
@@ -49,14 +50,74 @@ void MP2Node::updateRing() {
 	/*
 	 * Step 2: Construct the ring
 	 */
-	// Sort the list based on the hashCode
+	//Sort the list based on the hashCode
 	sort(curMemList.begin(), curMemList.end());
 
+	if(ring.size() != curMemList.size())
+	{
+		change = true;
+	}
+	else
+	{
+		for(int i = 0; i < curMemList.size(); i++)
+		{
+			if(!(*(curMemList[i].getAddress()) == *(ring[i].getAddress())))
+			{
+				change = true;
+				break;
+			}		
+		}	
+	}
+	
+	ring = curMemList;
+
+
+	if(this->hasMyReplicas.size() == 0)
+	{
+		int currentIndex = GetCurrentNodePosInRing();
+		int secondRepPos = (currentIndex + 1) % ring.size();
+		int thirdRepPos = (currentIndex + 2) % ring.size();
+		// cout << "secondRepPos=" << secondRepPos << "   thirdRepPos=" << thirdRepPos <<endl;
+
+		this->hasMyReplicas.push_back(ring[secondRepPos]);
+		this->hasMyReplicas.push_back(ring[thirdRepPos]);
+	}	
+
+	if(this->haveReplicasOf.size() == 0)
+	{
+		int currentIndex = GetCurrentNodePosInRing();
+		int firstHaveRepPos = (ring.size() + currentIndex - 2) % ring.size();
+		int secondHaveRepPos = (ring.size() + currentIndex -1) % ring.size();
+		// cout << "firstHaveRepPos=" << firstHaveRepPos << "   secondHaveRepPos=" << secondHaveRepPos <<endl;
+
+		this->haveReplicasOf.push_back(ring[firstHaveRepPos]);
+		this->haveReplicasOf.push_back(ring[secondHaveRepPos]);
+	}
 
 	/*
 	 * Step 3: Run the stabilization protocol IF REQUIRED
 	 */
 	// Run stabilization protocol if the hash table size is greater than zero and if there has been a changed in the ring
+	 if(change == true && !ht->isEmpty())
+	 {
+	 	stabilizationProtocol();
+	 }
+}
+
+int MP2Node::GetCurrentNodePosInRing()
+{
+
+	int currentIndex = -1;
+	for(int i = 0 ; i < ring.size(); i++)
+	{
+		if( (*ring[i].getAddress()) == this->memberNode->addr)
+		{
+			currentIndex = i;
+			break;
+		}
+	}
+
+	return currentIndex;
 }
 
 /**
@@ -111,6 +172,8 @@ void MP2Node::clientCreate(string key, string value) {
 	/*
 	 * Implement this
 	 */
+
+	 // Get all the replica Node
 }
 
 /**
@@ -328,4 +391,13 @@ void MP2Node::stabilizationProtocol() {
 	/*
 	 * Implement this
 	 */
+	int currentIndex = GetCurrentNodePosInRing();
+	int secondRepPos = (currentIndex + 1) % ring.size();
+	int thirdRepPos = (currentIndex + 2) % ring.size();
+	Node secondRepPosNode = this->hasMyReplicas[0];
+	Node thirdRepPosNode = this->hasMyReplicas[1];
+	if(! (*(secondRepPosNode.getAddress()) == *(ring[secondRepPos].getAddress())))
+	{
+		
+	}
 }
