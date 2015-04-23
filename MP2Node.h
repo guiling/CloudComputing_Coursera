@@ -50,6 +50,7 @@ private:
 
 private:
 	int GetCurrentNodePosInRing();
+	map<string, string> getPrimaryKeysOfThisNode();
 public:
 	MP2Node(Member *memberNode, Params *par, EmulNet *emulNet, Log *log, Address *addressOfMember);
 	Member * getMemberNode() {

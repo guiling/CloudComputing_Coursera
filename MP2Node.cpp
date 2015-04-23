@@ -68,8 +68,11 @@ void MP2Node::updateRing() {
 			}		
 		}	
 	}
-	
-	ring = curMemList;
+		
+	if(change)
+	{
+		ring = curMemList;
+	}
 
 
 	if(this->hasMyReplicas.size() == 0)
@@ -396,8 +399,32 @@ void MP2Node::stabilizationProtocol() {
 	int thirdRepPos = (currentIndex + 2) % ring.size();
 	Node secondRepPosNode = this->hasMyReplicas[0];
 	Node thirdRepPosNode = this->hasMyReplicas[1];
-	if(! (*(secondRepPosNode.getAddress()) == *(ring[secondRepPos].getAddress())))
+	if(! (*secondRepPosNode.getAddress() == *ring[secondRepPos].getAddress()))
 	{
-		
+		map<string,string> primaryItemsInHashTable = getPrimaryKeysOfThisNode();
+		for(map<string, string>::iterator it = primaryItemsInHashTable.begin(); it != primaryItemsInHashTable.end(); it++)
+		{
+			
+		}
 	}
+}
+
+map<string, string> MP2Node::getPrimaryKeysOfThisNode()
+{
+	map<string, string> primaryItems;
+
+	map<string, string>::iterator it;
+	for(it = this->ht->hashTable.begin(); it != this->ht->hashTable.end(); it++)
+	{
+		string value = it->second;
+		Entry * entry = new Entry(value);
+		if(entry->replica == PRIMARY)
+		{
+			primaryItems.emplace(it->first,it->second);
+		}
+
+		delete entry;
+	}
+
+	return primaryItems;
 }
