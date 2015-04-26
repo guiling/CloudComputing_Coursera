@@ -49,8 +49,16 @@ private:
 	Log * log;
 
 private:
-	int GetCurrentNodePosInRing();
-	map<string, string> getPrimaryKeysOfThisNode();
+	int getCurrentNodePosInRing();
+	void updateBossedReplicaLocally(map<string, string> items, ReplicaType replicaType);
+	map<string, string> getKeysOfThisNode(ReplicaType replica);
+	bool isSameNode(Node one, Node another);
+	void updateMyReplica(
+		Address* toAddress,
+		ReplicaType replicaType,
+	 	MessageType messageType, 
+	 	map<string, string> items);
+
 public:
 	MP2Node(Member *memberNode, Params *par, EmulNet *emulNet, Log *log, Address *addressOfMember);
 	Member * getMemberNode() {

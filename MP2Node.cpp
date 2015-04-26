@@ -61,7 +61,7 @@ void MP2Node::updateRing() {
 	{
 		for(int i = 0; i < curMemList.size(); i++)
 		{
-			if(!(*(curMemList[i].getAddress()) == *(ring[i].getAddress())))
+			if(!isSameNode(curMemList[i], ring[i]))
 			{
 				change = true;
 				break;
@@ -77,7 +77,7 @@ void MP2Node::updateRing() {
 
 	if(this->hasMyReplicas.size() == 0)
 	{
-		int currentIndex = GetCurrentNodePosInRing();
+		int currentIndex = getCurrentNodePosInRing();
 		int secondRepPos = (currentIndex + 1) % ring.size();
 		int thirdRepPos = (currentIndex + 2) % ring.size();
 		// cout << "secondRepPos=" << secondRepPos << "   thirdRepPos=" << thirdRepPos <<endl;
@@ -88,13 +88,13 @@ void MP2Node::updateRing() {
 
 	if(this->haveReplicasOf.size() == 0)
 	{
-		int currentIndex = GetCurrentNodePosInRing();
-		int firstHaveRepPos = (ring.size() + currentIndex - 2) % ring.size();
+		int currentIndex = getCurrentNodePosInRing();
+		int thirdPossedRepPos = (ring.size() + currentIndex - 2) % ring.size();
 		int secondHaveRepPos = (ring.size() + currentIndex -1) % ring.size();
 		// cout << "firstHaveRepPos=" << firstHaveRepPos << "   secondHaveRepPos=" << secondHaveRepPos <<endl;
 
-		this->haveReplicasOf.push_back(ring[firstHaveRepPos]);
 		this->haveReplicasOf.push_back(ring[secondHaveRepPos]);
+		this->haveReplicasOf.push_back(ring[thirdPossedRepPos]);
 	}
 
 	/*
@@ -107,7 +107,7 @@ void MP2Node::updateRing() {
 	 }
 }
 
-int MP2Node::GetCurrentNodePosInRing()
+int MP2Node::getCurrentNodePosInRing()
 {
 
 	int currentIndex = -1;
@@ -391,25 +391,128 @@ int MP2Node::enqueueWrapper(void *env, char *buff, int size) {
  *				Note:- "CORRECT" replicas implies that every key is replicated in its two neighboring nodes in the ring
  */
 void MP2Node::stabilizationProtocol() {
-	/*
-	 * Implement this
-	 */
-	int currentIndex = GetCurrentNodePosInRing();
+	
+
+	// First :	update the second and third node who has my replicas
+
+	int currentIndex = getCurrentNodePosInRing();
 	int secondRepPos = (currentIndex + 1) % ring.size();
 	int thirdRepPos = (currentIndex + 2) % ring.size();
 	Node secondRepPosNode = this->hasMyReplicas[0];
 	Node thirdRepPosNode = this->hasMyReplicas[1];
-	if(! (*secondRepPosNode.getAddress() == *ring[secondRepPos].getAddress()))
-	{
-		map<string,string> primaryItemsInHashTable = getPrimaryKeysOfThisNode();
-		for(map<string, string>::iterator it = primaryItemsInHashTable.begin(); it != primaryItemsInHashTable.end(); it++)
+	map<string,string> primaryItemsInHashTable = getKeysOfThisNode(PRIMARY);
+	
+	if(! isSameNode(secondRepPosNode, ring[secondRepPos]))
+	{		
+		// the current second replica is not same with third replica, 
+		// this happend when the current is a new joined node, 
+		// we need send create message to this node
+
+		if(! isSameNode(thirdRepPosNode, ring[secondRepPos]))
 		{
+			updateMyReplica(ring[secondRepPos].getAddress(), SECONDARY, CREATE, primaryItemsInHashTable);
+		}
+		else
+		{
+			updateMyReplica(ring[secondRepPos].getAddress(), SECONDARY,UPDATE, primaryItemsInHashTable);
+		}
+		
+	}
+
+	if(! isSameNode(thirdRepPosNode, ring[thirdRepPos]))
+	{
+		// the current third replica is not same with second replica,
+		// this happened when an existing node deleted
+		// we need send create message to this node 
+		
+		if(! isSameNode(secondRepPosNode, ring[thirdRepPos]))
+		{
+			updateMyReplica(ring[thirdRepPos].getAddress(), TERTIARY, CREATE, primaryItemsInHashTable);
+		}
+		else
+		{
+			updateMyReplica(ring[thirdRepPos].getAddress(), TERTIARY,UPDATE, primaryItemsInHashTable);
+		}
+	}
+
+	// Second: update the bossed replicas  
+	int thirdHaveRepPos = (ring.size() + currentIndex - 2) % ring.size();
+	int secondHaveRepPos = (ring.size() + currentIndex -1) % ring.size();
+	Node secondHaveRepNode = this->haveReplicasOf[0];
+	Node thirdHaveRepNode = this->haveReplicasOf[1];
+
+	bool isSecondHaveNodeLost = false;
+	if(! isSameNode(secondRepPosNode, ring[secondHaveRepPos]))
+	{
+		if(! isSameNode(thirdHaveRepNode, ring[secondHaveRepPos]))
+		{
+			isSecondHaveNodeLost = true;
+			map<string,string> secondaryInHashTable = getKeysOfThisNode(SECONDARY);
+			updateBossedReplicaLocally(secondaryInHashTable, PRIMARY);
+			updateMyReplica(ring[secondRepPos].getAddress(), SECONDARY, CREATE, secondaryInHashTable);
 			
 		}
 	}
+
+	if(isSecondHaveNodeLost)
+	{
+		if(!isSameNode(thirdHaveRepNode, ring[thirdHaveRepPos]))
+		{
+			if(!isSameNode(secondRepPosNode, ring[thirdHaveRepPos]))
+			{
+			 	map<string,string> tertiaryInHashTable = getKeysOfThisNode(TERTIARY);
+			 	updateBossedReplicaLocally(tertiaryInHashTable, PRIMARY);
+			 	updateMyReplica(ring[thirdRepPos].getAddress(), TERTIARY, CREATE, tertiaryInHashTable);
+			}
+		}
+	}
+
+	//At last update my replica and possed replica
+
+	vector<Node> newMyReplica;
+	newMyReplica.push_back(ring[secondRepPos]);
+	newMyReplica.push_back(ring[thirdRepPos]);
+
+	this->hasMyReplicas = newMyReplica;
+
+	vector<Node> newPossedReplica;
+	newPossedReplica.push_back(ring[secondHaveRepPos]);
+	newPossedReplica.push_back(ring[thirdHaveRepPos]);
+
+	this->haveReplicasOf = newPossedReplica;
 }
 
-map<string, string> MP2Node::getPrimaryKeysOfThisNode()
+void MP2Node::updateBossedReplicaLocally(map<string, string> items, ReplicaType replicaType)
+{
+	for(map<string, string>::iterator it = items.begin(); it != items.end(); it++)
+	{
+		Entry * entry = new Entry(it->second);
+		entry->replica = replicaType;
+		string newValue = entry->convertToString();
+		ht->update(it->first, newValue);
+
+		delete entry;
+	}
+}
+
+void MP2Node::updateMyReplica(Address* toAddress, ReplicaType replicaType, MessageType messageType, map<string, string> items)
+{	
+	// transID::fromAddr::CREATE::key::value::ReplicaType
+	for(map<string, string>::iterator it = items.begin(); it != items.end(); it++)
+	{
+		Message* pMessage = new Message(-1 , this->memberNode->addr, messageType, it->first, it->second,replicaType);
+
+		this->emulNet->ENsend(&memberNode->addr, toAddress, (char *)pMessage, sizeof(Message));
+		delete(pMessage);
+	}
+}
+
+bool MP2Node::isSameNode(Node one, Node another)
+{
+	return (*one.getAddress() == *another.getAddress());
+}
+
+map<string, string> MP2Node::getKeysOfThisNode(ReplicaType replica)
 {
 	map<string, string> primaryItems;
 
@@ -418,7 +521,7 @@ map<string, string> MP2Node::getPrimaryKeysOfThisNode()
 	{
 		string value = it->second;
 		Entry * entry = new Entry(value);
-		if(entry->replica == PRIMARY)
+		if(entry->replica == replica)
 		{
 			primaryItems.emplace(it->first,it->second);
 		}
