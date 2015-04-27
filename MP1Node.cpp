@@ -159,9 +159,7 @@ int MP1Node::introduceSelfToGroup(Address *joinaddr) {
  * DESCRIPTION: Wind up this node and clean up state
  */
 int MP1Node::finishUpThisNode(){
-
-    delete memberNode;
-    memberNode = NULL;
+    
     return 1;
 }
 

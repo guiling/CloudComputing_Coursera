@@ -74,8 +74,8 @@ void MP2Node::updateRing() {
 		ring = curMemList;
 	}
 
-
-	if(this->hasMyReplicas.size() == 0)
+ 
+	if(this->hasMyReplicas.size() == 0 && ring.size() > 0)
 	{
 		int currentIndex = getCurrentNodePosInRing();
 		int secondRepPos = (currentIndex + 1) % ring.size();
@@ -86,7 +86,7 @@ void MP2Node::updateRing() {
 		this->hasMyReplicas.push_back(ring[thirdRepPos]);
 	}	
 
-	if(this->haveReplicasOf.size() == 0)
+	if(this->haveReplicasOf.size() == 0 && ring.size() > 0)
 	{
 		int currentIndex = getCurrentNodePosInRing();
 		int thirdPossedRepPos = (ring.size() + currentIndex - 2) % ring.size();
@@ -101,7 +101,7 @@ void MP2Node::updateRing() {
 	 * Step 3: Run the stabilization protocol IF REQUIRED
 	 */
 	// Run stabilization protocol if the hash table size is greater than zero and if there has been a changed in the ring
-	 if(change == true && !ht->isEmpty())
+	 if(change == true && ht->isEmpty())
 	 {
 	 	stabilizationProtocol();
 	 }
@@ -172,11 +172,18 @@ size_t MP2Node::hashFunction(string key) {
  * 				3) Sends a message to the replica
  */
 void MP2Node::clientCreate(string key, string value) {
-	/*
-	 * Implement this
-	 */
-
+	
 	 // Get all the replica Node
+	vector<Node> replicaNodes = findNodes(key);
+	for(int i = 0; i < replicaNodes.size(); i++)
+	{
+		ReplicaType replica = static_cast<ReplicaType>(i);
+		Message* pMessage = new Message(g_transID++, 
+			this->memberNode->addr, CREATE, key, value,replica);
+
+		this->emulNet->ENsend(&memberNode->addr, replicaNodes[i].getAddress(), pMessage->toString());
+		delete(pMessage);
+	}
 }
 
 /**
@@ -233,10 +240,12 @@ void MP2Node::clientDelete(string key){
  * 			   	2) Return true or false based on success or failure
  */
 bool MP2Node::createKeyValue(string key, string value, ReplicaType replica) {
-	/*
-	 * Implement this
-	 */
+
 	// Insert key, value, replicaType into the hash table
+	Entry * entry = new Entry(value, par->globaltime,replica);
+	bool isSuccess = ht->create(key, entry->convertToString());
+	delete(entry);
+	return isSuccess;
 }
 
 /**
@@ -310,13 +319,45 @@ void MP2Node::checkMessages() {
 		 */
 		data = (char *)memberNode->mp2q.front().elt;
 		size = memberNode->mp2q.front().size;
+
 		memberNode->mp2q.pop();
 
 		string message(data, data + size);
+		Message* receivedMessage = new Message(message);
+		
+		 switch(receivedMessage->type)
+		 {
+		 	case CREATE:
+		 	{
+		 		bool isCreateSucc = createKeyValue(receivedMessage->key,
+		 		 receivedMessage->value, receivedMessage->replica);
+		 		//Create reply Message format : 
+	 			//			Message(int _transID, Address _fromAddr, MessageType _type, bool _success)
+	 			
+	 			Message* replyMessage = new Message(receivedMessage->transID, 
+	 				this->memberNode->addr, REPLY, isCreateSucc);
+	 			
+	 			 this->emulNet->ENsend(&memberNode->addr, &receivedMessage->fromAddr, replyMessage->toString());
 
-		/*
-		 * Handle the message types here
-		 */
+				delete(replyMessage);
+
+		 		if(isCreateSucc)
+		 		{
+		 			log->logCreateSuccess(&this->memberNode->addr, false, receivedMessage->transID,
+		 				receivedMessage->key, receivedMessage->value);
+
+		 		}
+		 		else
+		 		{
+		 			log->logCreateFail(&this->memberNode->addr, false, receivedMessage->transID,
+		 				receivedMessage->key, receivedMessage->value);
+		 		}
+
+		 		break;
+		 	}
+		 }
+
+		 delete(receivedMessage); 
 
 	}
 
@@ -401,13 +442,12 @@ void MP2Node::stabilizationProtocol() {
 	Node secondRepPosNode = this->hasMyReplicas[0];
 	Node thirdRepPosNode = this->hasMyReplicas[1];
 	map<string,string> primaryItemsInHashTable = getKeysOfThisNode(PRIMARY);
-	
+
 	if(! isSameNode(secondRepPosNode, ring[secondRepPos]))
 	{		
 		// the current second replica is not same with third replica, 
 		// this happend when the current is a new joined node, 
 		// we need send create message to this node
-
 		if(! isSameNode(thirdRepPosNode, ring[secondRepPos]))
 		{
 			updateMyReplica(ring[secondRepPos].getAddress(), SECONDARY, CREATE, primaryItemsInHashTable);
@@ -501,8 +541,7 @@ void MP2Node::updateMyReplica(Address* toAddress, ReplicaType replicaType, Messa
 	for(map<string, string>::iterator it = items.begin(); it != items.end(); it++)
 	{
 		Message* pMessage = new Message(-1 , this->memberNode->addr, messageType, it->first, it->second,replicaType);
-
-		this->emulNet->ENsend(&memberNode->addr, toAddress, (char *)pMessage, sizeof(Message));
+		this->emulNet->ENsend(&memberNode->addr, toAddress, pMessage->toString());
 		delete(pMessage);
 	}
 }
