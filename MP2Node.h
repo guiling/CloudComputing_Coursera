@@ -19,6 +19,8 @@
 #include "Message.h"
 #include "Queue.h"
 
+#define TIME_OUT 20
+
 /**
  * CLASS NAME: MP2Node
  *
@@ -29,6 +31,16 @@
  * 				3) Server side CRUD APIs
  * 				4) Client side CRUD APIs
  */
+typedef struct _transInfo
+{
+	MessageType type;
+	string key;
+	string value;
+	int startTime;
+	int replyTimes;
+}TransInfo;
+
+
 class MP2Node {
 private:
 	// Vector holding the next two neighbors in the ring who have my replicas
@@ -47,6 +59,8 @@ private:
 	EmulNet * emulNet;
 	// Object of Log
 	Log * log;
+
+	map<int, TransInfo> transIdInfo;
 
 private:
 	int getCurrentNodePosInRing();
