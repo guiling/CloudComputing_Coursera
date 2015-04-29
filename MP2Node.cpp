@@ -207,9 +207,25 @@ void MP2Node::clientCreate(string key, string value) {
  * 				3) Sends a message to the replica
  */
 void MP2Node::clientRead(string key){
-	/*
-	 * Implement this
-	 */
+	vector<Node> replicaNodes = findNodes(key);
+	int transID = g_transID++;
+
+	for(int i = 0; i < replicaNodes.size(); i++)
+	{
+		Message* pMessage = new Message(transID, 
+			this->memberNode->addr, READ, key);
+
+		this->emulNet->ENsend(&memberNode->addr, replicaNodes[i].getAddress(), pMessage->toString());
+		delete(pMessage);
+	}
+
+	TransInfo transInfo;
+	transInfo.type = READ;
+	transInfo.key = key;
+	transInfo.replyTimes = 0;
+	transInfo.startTime = par->globaltime;
+
+	transIdInfo.emplace(transID, transInfo);
 }
 
 /**
@@ -222,9 +238,28 @@ void MP2Node::clientRead(string key){
  * 				3) Sends a message to the replica
  */
 void MP2Node::clientUpdate(string key, string value){
-	/*
-	 * Implement this
-	 */
+
+	vector<Node> replicaNodes = findNodes(key);
+	int transID = g_transID++;
+
+	for(int i = 0; i < replicaNodes.size(); i++)
+	{
+		ReplicaType replica = static_cast<ReplicaType>(i);
+		Message* pMessage = new Message(transID, 
+			this->memberNode->addr, UPDATE, key, value, replica);
+
+		this->emulNet->ENsend(&memberNode->addr, replicaNodes[i].getAddress(), pMessage->toString());
+		delete(pMessage);
+	}
+
+	TransInfo transInfo;
+	transInfo.type = UPDATE;
+	transInfo.key = key;
+	transInfo.value = value;
+	transInfo.replyTimes = 0;
+	transInfo.startTime = par->globaltime;
+
+	transIdInfo.emplace(transID, transInfo);
 }
 
 /**
@@ -284,10 +319,8 @@ bool MP2Node::createKeyValue(string key, string value, ReplicaType replica) {
  * 			    2) Return value
  */
 string MP2Node::readKey(string key) {
-	/*
-	 * Implement this
-	 */
 	// Read key from local hash table and return value
+	return ht->read(key);
 }
 
 /**
@@ -299,10 +332,12 @@ string MP2Node::readKey(string key) {
  * 				2) Return true or false based on success or failure
  */
 bool MP2Node::updateKeyValue(string key, string value, ReplicaType replica) {
-	/*
-	 * Implement this
-	 */
+	
 	// Update key in local hash table and return true or false
+	Entry * entry = new Entry(value, par->globaltime,replica);
+	bool isSuccess = ht->update(key, entry->convertToString());
+	delete(entry);
+	return isSuccess;
 }
 
 /**
@@ -359,24 +394,26 @@ void MP2Node::checkMessages() {
 		 		 receivedMessage->value, receivedMessage->replica);
 		 		//Create reply Message format : 
 	 			//			Message(int _transID, Address _fromAddr, MessageType _type, bool _success)
-	 			
-	 			Message* replyMessage = new Message(receivedMessage->transID, 
-	 				this->memberNode->addr, REPLY, isCreateSucc);
-	 			
-	 			this->emulNet->ENsend(&memberNode->addr, &receivedMessage->fromAddr, replyMessage->toString());
+	 			if(receivedMessage->transID != -1)
+	 			{
+		 			Message* replyMessage = new Message(receivedMessage->transID, 
+		 				this->memberNode->addr, REPLY, isCreateSucc);
+		 			
+		 			this->emulNet->ENsend(&memberNode->addr, &receivedMessage->fromAddr, replyMessage->toString());
 
-				delete(replyMessage);
+					delete(replyMessage);
 
-		 		if(isCreateSucc)
-		 		{
-		 			log->logCreateSuccess(&this->memberNode->addr, false, receivedMessage->transID,
-		 				receivedMessage->key, receivedMessage->value);
+			 		if(isCreateSucc)
+			 		{
+			 			log->logCreateSuccess(&this->memberNode->addr, false, receivedMessage->transID,
+			 				receivedMessage->key, receivedMessage->value);
 
-		 		}
-		 		else
-		 		{
-		 			log->logCreateFail(&this->memberNode->addr, false, receivedMessage->transID,
-		 				receivedMessage->key, receivedMessage->value);
+			 		}
+			 		else
+			 		{
+			 			log->logCreateFail(&this->memberNode->addr, false, receivedMessage->transID,
+			 				receivedMessage->key, receivedMessage->value);
+			 		}
 		 		}
 
 		 		break;
@@ -384,24 +421,106 @@ void MP2Node::checkMessages() {
 		 	case DELETE:
 		 	{
 		 		bool isDeleteSucc = deletekey(receivedMessage->key);
-				Message* replyMessage = new Message(receivedMessage->transID, 
-	 				this->memberNode->addr, REPLY, isDeleteSucc);
-	 			
-	 			this->emulNet->ENsend(&memberNode->addr, &receivedMessage->fromAddr, replyMessage->toString());
 
-				delete(replyMessage);	
-				if(isDeleteSucc)
+		 		if(receivedMessage->transID != -1)
 		 		{
-		 			log->logDeleteSuccess(&this->memberNode->addr, false, receivedMessage->transID,
-		 				receivedMessage->key);
+					Message* replyMessage = new Message(receivedMessage->transID, 
+		 				this->memberNode->addr, REPLY, isDeleteSucc);
+		 			
+		 			this->emulNet->ENsend(&memberNode->addr, &receivedMessage->fromAddr, replyMessage->toString());
 
+					delete(replyMessage);	
+					if(isDeleteSucc)
+			 		{
+			 			log->logDeleteSuccess(&this->memberNode->addr, false, receivedMessage->transID,
+			 				receivedMessage->key);
+
+			 		}
+			 		else
+			 		{
+			 			log->logDeleteFail(&this->memberNode->addr, false, receivedMessage->transID,
+			 				receivedMessage->key);
+			 		}	 
 		 		}
-		 		else
-		 		{
-		 			log->logDeleteFail(&this->memberNode->addr, false, receivedMessage->transID,
-		 				receivedMessage->key);
-		 		}	 			
+
 		 		break;
+		 	}
+		 	case UPDATE:
+		 	{
+		 		bool isUpdateSucc = updateKeyValue(receivedMessage->key,
+		 		 receivedMessage->value, receivedMessage->replica);
+	 			if(receivedMessage->transID != -1)
+	 			{
+		 			Message* replyMessage = new Message(receivedMessage->transID, 
+		 				this->memberNode->addr, REPLY, isUpdateSucc);
+		 			
+		 			this->emulNet->ENsend(&memberNode->addr, &receivedMessage->fromAddr, replyMessage->toString());
+
+					delete(replyMessage);
+
+			 		if(isUpdateSucc)
+			 		{
+			 			log->logUpdateSuccess(&this->memberNode->addr, false, receivedMessage->transID,
+			 				receivedMessage->key, receivedMessage->value);
+
+			 		}
+			 		else
+			 		{
+			 			log->logUpdateFail(&this->memberNode->addr, false, receivedMessage->transID,
+			 				receivedMessage->key, receivedMessage->value);
+			 		}
+			 	}
+
+		 		break;
+		 	}
+		 	case READ:
+		 	{
+		 		string readValue = readKey(receivedMessage->key);
+		 		if(readValue != "")
+		 		{
+		 			Entry * entry = new Entry(readValue);
+					readValue = entry->value;
+					delete entry;
+		 		}	
+
+		 		if(receivedMessage->transID != -1)
+		 		{
+					Message* replyMessage = new Message(receivedMessage->transID, 
+		 				this->memberNode->addr, readValue);
+		 			
+		 			this->emulNet->ENsend(&memberNode->addr, &receivedMessage->fromAddr, replyMessage->toString());
+
+					delete(replyMessage);	
+					if(readValue != "")
+			 		{
+			 			log->logReadSuccess(&this->memberNode->addr, false, receivedMessage->transID,
+			 				receivedMessage->key, readValue);
+
+			 		}
+			 		else
+			 		{
+			 			log->logReadFail(&this->memberNode->addr, false, receivedMessage->transID,
+			 				receivedMessage->key);
+			 		}	 
+		 		}
+
+		 		break;
+		 	}
+		 	case READREPLY:
+		 	{
+		 		if(receivedMessage->value != "")
+		 		{
+					map<int, TransInfo>::iterator search;
+					search = transIdInfo.find(receivedMessage->transID);
+					if ( search != transIdInfo.end() ) 
+					{
+						//TODD : how to solve the read conflict
+						transIdInfo[receivedMessage->transID].value = receivedMessage->value;
+						transIdInfo[receivedMessage->transID].replyTimes ++ ;
+					}
+		 		}
+
+		 		break;	
 		 	}
 		 	case REPLY:
 		 	{
@@ -423,6 +542,8 @@ void MP2Node::checkMessages() {
 	}
 
 	// check coordinator reply status
+	// TODO: support rollback. Now we seem all the operation from client as a transcation
+
 	map<int, TransInfo>::iterator it;
 	for(it = this->transIdInfo.begin(); it != this->transIdInfo.end(); it++)
 	{
@@ -476,6 +597,58 @@ void MP2Node::checkMessages() {
 				}
 
 				break;
+			}
+			case UPDATE:
+			{
+				if(par->globaltime -  transInfo.startTime > TIME_OUT)
+				{
+					log->logUpdateFail(&this->memberNode->addr,
+						true,
+					    it->first, 
+					    transInfo.key,
+					    transInfo.value);
+					transIdInfo.erase(it->first);
+				}
+				else
+				{
+					if(transInfo.replyTimes >= 2)
+					{
+						log->logUpdateSuccess(&this->memberNode->addr,
+							true, 
+							it->first,
+			 				transInfo.key,
+			 				transInfo.value);
+
+						transIdInfo.erase(it->first);
+					}
+				}
+
+				break;
+			}
+			case READ:
+			{
+				if(par->globaltime -  transInfo.startTime > TIME_OUT)
+				{
+					log->logReadFail(&this->memberNode->addr,
+						true,
+					    it->first, 
+					    transInfo.key);
+					transIdInfo.erase(it->first);
+				}
+				else
+				{
+					if(transInfo.replyTimes >= 2)
+					{
+						log->logReadSuccess(&this->memberNode->addr,
+							true, 
+							it->first,
+			 				transInfo.key,
+			 				transInfo.value);
+						transIdInfo.erase(it->first);
+					}
+				}
+
+				break;	
 			}
 		}
 		
