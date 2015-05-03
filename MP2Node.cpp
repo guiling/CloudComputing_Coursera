@@ -73,15 +73,13 @@ void MP2Node::updateRing() {
 	{
 		ring = curMemList;
 	}
-
  
 	if(this->hasMyReplicas.size() == 0 && ring.size() > 0)
 	{
 		int currentIndex = getCurrentNodePosInRing();
 		int secondRepPos = (currentIndex + 1) % ring.size();
 		int thirdRepPos = (currentIndex + 2) % ring.size();
-		// cout << "secondRepPos=" << secondRepPos << "   thirdRepPos=" << thirdRepPos <<endl;
-
+		// cout<< "firstRepPos=" << currentIndex << "secondRepPos=" << secondRepPos << "   thirdRepPos=" << thirdRepPos <<endl;
 		this->hasMyReplicas.push_back(ring[secondRepPos]);
 		this->hasMyReplicas.push_back(ring[thirdRepPos]);
 	}	
@@ -101,7 +99,7 @@ void MP2Node::updateRing() {
 	 * Step 3: Run the stabilization protocol IF REQUIRED
 	 */
 	// Run stabilization protocol if the hash table size is greater than zero and if there has been a changed in the ring
-	 if(change == true && ht->isEmpty())
+	 if(change == true && !ht->isEmpty())
 	 {
 	 	stabilizationProtocol();
 	 }
@@ -586,7 +584,7 @@ void MP2Node::checkMessages() {
 				}
 				else
 				{
-					if(transInfo.replyTimes == 3)
+					if(transInfo.replyTimes >= 2)
 					{
 						log->logDeleteSuccess(&this->memberNode->addr,
 							true, 
@@ -825,10 +823,14 @@ void MP2Node::updateBossedReplicaLocally(map<string, string> items, ReplicaType 
 
 void MP2Node::updateMyReplica(Address* toAddress, ReplicaType replicaType, MessageType messageType, map<string, string> items)
 {	
+	// cout << memberNode->addr.getAddress() << "  send message to  " <<toAddress->getAddress() << " at " << par->globaltime << endl;
 	// transID::fromAddr::CREATE::key::value::ReplicaType
+	
 	for(map<string, string>::iterator it = items.begin(); it != items.end(); it++)
 	{
 		Message* pMessage = new Message(-1 , this->memberNode->addr, messageType, it->first, it->second,replicaType);
+		// cout << pMessage->toString() << endl;
+
 		this->emulNet->ENsend(&memberNode->addr, toAddress, pMessage->toString());
 		delete(pMessage);
 	}
