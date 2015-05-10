@@ -73,6 +73,20 @@ private:
 	 	MessageType messageType, 
 	 	map<string, string> items);
 
+	void doCreateReplyMessage(Message* receivedMessage);
+	void doDeleteReplyMessage(Message* receivedMessage);
+	void doReadReplyMessage(Message* receivedMessage);
+	void doUpdateReplyMessage(Message* receivedMessage);
+	void doReadReplyReplyMessage(Message* receivedMessage);
+	void doReplyReplyMessage(Message* receivedMessage);
+
+	void checkCoordinatoReplyStatus();
+
+	void checkCoordinatorReadMessage(int transID, TransInfo transInfo);
+	void checkCoordinatorCreateMessage(int transID, TransInfo transInfo);
+	void checkCoordinatorUpdateMessage(int transID, TransInfo transInfo);
+	void checkCoordinatorDeleteMessage(int transID, TransInfo transInfo);
+
 public:
 	MP2Node(Member *memberNode, Params *par, EmulNet *emulNet, Log *log, Address *addressOfMember);
 	Member * getMemberNode() {

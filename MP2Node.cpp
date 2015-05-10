@@ -107,7 +107,6 @@ void MP2Node::updateRing() {
 
 int MP2Node::getCurrentNodePosInRing()
 {
-
 	int currentIndex = -1;
 	for(int i = 0 ; i < ring.size(); i++)
 	{
@@ -352,6 +351,278 @@ bool MP2Node::deletekey(string key) {
 	return ht->deleteKey(key);
 }
 
+void MP2Node::doCreateReplyMessage(Message* receivedMessage)
+{
+	bool isCreateSucc = createKeyValue(receivedMessage->key,
+	receivedMessage->value, receivedMessage->replica);
+	//Create reply Message format : 
+	//			Message(int _transID, Address _fromAddr, MessageType _type, bool _success)
+	if(receivedMessage->transID != -1)
+	{
+		Message* replyMessage = new Message(receivedMessage->transID, 
+			this->memberNode->addr, REPLY, isCreateSucc);
+
+		this->emulNet->ENsend(&memberNode->addr, &receivedMessage->fromAddr, replyMessage->toString());
+
+		delete(replyMessage);
+
+		if(isCreateSucc)
+		{
+			log->logCreateSuccess(&this->memberNode->addr, false, receivedMessage->transID,
+				receivedMessage->key, receivedMessage->value);
+
+		}
+		else
+		{
+			log->logCreateFail(&this->memberNode->addr, false, receivedMessage->transID,
+				receivedMessage->key, receivedMessage->value);
+		}
+	}
+}
+
+void MP2Node::doDeleteReplyMessage(Message* receivedMessage)
+{
+	bool isDeleteSucc = deletekey(receivedMessage->key);
+
+	if(receivedMessage->transID != -1)
+	{
+		Message* replyMessage = new Message(receivedMessage->transID, 
+		this->memberNode->addr, REPLY, isDeleteSucc);
+
+		this->emulNet->ENsend(&memberNode->addr, &receivedMessage->fromAddr, replyMessage->toString());
+
+		delete(replyMessage);	
+		if(isDeleteSucc)
+		{
+			log->logDeleteSuccess(&this->memberNode->addr, false, receivedMessage->transID,
+			receivedMessage->key);
+
+		}
+		else
+		{
+			log->logDeleteFail(&this->memberNode->addr, false, receivedMessage->transID,
+			receivedMessage->key);
+		}	 
+	}
+}
+
+void MP2Node::doUpdateReplyMessage(Message * receivedMessage)
+{
+	bool isUpdateSucc = updateKeyValue(receivedMessage->key,
+	receivedMessage->value, receivedMessage->replica);
+	if(receivedMessage->transID != -1)
+	{
+		Message* replyMessage = new Message(receivedMessage->transID, 
+			this->memberNode->addr, REPLY, isUpdateSucc);
+
+		this->emulNet->ENsend(&memberNode->addr, &receivedMessage->fromAddr, replyMessage->toString());
+
+		delete(replyMessage);
+
+		if(isUpdateSucc)
+		{
+			log->logUpdateSuccess(&this->memberNode->addr, false, receivedMessage->transID,
+				receivedMessage->key, receivedMessage->value);
+
+		}
+		else
+		{
+			log->logUpdateFail(&this->memberNode->addr, false, receivedMessage->transID,
+				receivedMessage->key, receivedMessage->value);
+		}
+	}
+}
+
+void MP2Node::doReadReplyMessage(Message * receivedMessage)
+{
+	string readValue = readKey(receivedMessage->key);
+	if(readValue != "")
+	{
+		Entry * entry = new Entry(readValue);
+		readValue = entry->value;
+		delete entry;
+	}	
+
+	if(receivedMessage->transID != -1)
+	{
+		Message* replyMessage = new Message(receivedMessage->transID, 
+			this->memberNode->addr, readValue);
+
+		this->emulNet->ENsend(&memberNode->addr, &receivedMessage->fromAddr, replyMessage->toString());
+
+		delete(replyMessage);	
+		if(readValue != "")
+		{
+			log->logReadSuccess(&this->memberNode->addr, false, receivedMessage->transID,
+				receivedMessage->key, readValue);
+
+		}
+		else
+		{
+			log->logReadFail(&this->memberNode->addr, false, receivedMessage->transID,
+				receivedMessage->key);
+		}	 
+	}
+}
+
+void MP2Node::doReadReplyReplyMessage(Message * receivedMessage)
+{
+	if(receivedMessage->value != "")
+	{
+		map<int, TransInfo>::iterator search;
+		search = transIdInfo.find(receivedMessage->transID);
+		if ( search != transIdInfo.end() ) 
+		{
+			//TODD : how to solve the read conflict
+			transIdInfo[receivedMessage->transID].value = receivedMessage->value;
+			transIdInfo[receivedMessage->transID].replyTimes ++ ;
+		}
+	}	
+}
+
+void MP2Node::doReplyReplyMessage(Message* receivedMessage)
+{
+	if(receivedMessage->success)
+	{
+		map<int, TransInfo>::iterator search;
+		search = transIdInfo.find(receivedMessage->transID);
+		if ( search != transIdInfo.end() ) 
+		{
+			transIdInfo[receivedMessage->transID].replyTimes ++ ;
+		}
+	}		 		
+}
+
+void MP2Node::checkCoordinatorCreateMessage(int transID,TransInfo transInfo)
+{
+	if(par->globaltime - transInfo.startTime > TIME_OUT)
+	{
+		log->logCreateFail(&this->memberNode->addr,
+			true,
+		    transID, 
+		    transInfo.key, transInfo.value);
+		transIdInfo.erase(transID);
+	}
+	else
+	{
+		if(transInfo.replyTimes >= 2)
+		{
+			log->logCreateSuccess(&this->memberNode->addr,
+				true, 
+				transID,
+ 				transInfo.key, transInfo.value);
+			transIdInfo.erase(transID);
+		}
+	}	
+}
+
+void MP2Node::checkCoordinatorDeleteMessage(int transID, TransInfo transInfo)
+{
+	if(par->globaltime - transInfo.startTime > TIME_OUT)
+	{
+		log->logDeleteFail(&this->memberNode->addr,
+			true,
+		    transID, 
+		    transInfo.key);
+		transIdInfo.erase(transID);
+	}
+	else
+	{
+		if(transInfo.replyTimes >= 2)
+		{
+			log->logDeleteSuccess(&this->memberNode->addr,
+				true, 
+				transID,
+				transInfo.key);
+			transIdInfo.erase(transID);
+		}
+	}
+}
+
+void MP2Node::checkCoordinatorUpdateMessage(int transID, TransInfo transInfo)
+{
+	if(par->globaltime - transInfo.startTime > TIME_OUT)
+	{
+		log->logUpdateFail(&this->memberNode->addr,
+			true,
+		    transID, 
+		    transInfo.key,
+		    transInfo.value);
+		transIdInfo.erase(transID);
+	}
+	else
+	{
+		if(transInfo.replyTimes >= 2)
+		{
+			log->logUpdateSuccess(&this->memberNode->addr,
+				true, 
+				transID,
+				transInfo.key,
+				transInfo.value);
+
+			transIdInfo.erase(transID);
+		}
+	}
+}
+
+void MP2Node::checkCoordinatorReadMessage(int transID, TransInfo transInfo)
+{
+	if(par->globaltime -  transInfo.startTime > TIME_OUT)
+	{
+		log->logReadFail(&this->memberNode->addr,
+			true,
+		    transID, 
+		    transInfo.key);
+		transIdInfo.erase(transID);
+	}
+	else
+	{
+		if(transInfo.replyTimes >= 2)
+		{
+			log->logReadSuccess(&this->memberNode->addr,
+				true, 
+				transID,
+				transInfo.key,
+				transInfo.value);
+			transIdInfo.erase(transID);
+		}
+	}
+}
+
+void MP2Node::checkCoordinatoReplyStatus()
+{
+	// checkCoordinator reply status
+	// TODO: support rollback. Now we seem all the operation from client as a transcation
+	map<int, TransInfo>::iterator it;
+	for(it = this->transIdInfo.begin(); it != this->transIdInfo.end(); it++)
+	{
+		TransInfo transInfo = it->second;
+		switch(transInfo.type)
+		{
+			case CREATE:
+			{	
+				checkCoordinatorCreateMessage(it->first, transInfo);
+				break;
+			}
+			case DELETE:
+			{
+				checkCoordinatorDeleteMessage(it->first,transInfo);
+				break;
+			}
+			case UPDATE:
+			{
+				checkCoordinatorUpdateMessage(it->first,transInfo);	
+				break;
+			}
+			case READ:
+			{
+				checkCoordinatorReadMessage(it->first,transInfo);		
+				break;	
+			}
+		}
+	}		
+}
+
 /**
  * FUNCTION NAME: checkMessages
  *
@@ -388,269 +659,41 @@ void MP2Node::checkMessages() {
 		 {
 		 	case CREATE:
 		 	{
-		 		bool isCreateSucc = createKeyValue(receivedMessage->key,
-		 		 receivedMessage->value, receivedMessage->replica);
-		 		//Create reply Message format : 
-	 			//			Message(int _transID, Address _fromAddr, MessageType _type, bool _success)
-	 			if(receivedMessage->transID != -1)
-	 			{
-		 			Message* replyMessage = new Message(receivedMessage->transID, 
-		 				this->memberNode->addr, REPLY, isCreateSucc);
-		 			
-		 			this->emulNet->ENsend(&memberNode->addr, &receivedMessage->fromAddr, replyMessage->toString());
-
-					delete(replyMessage);
-
-			 		if(isCreateSucc)
-			 		{
-			 			log->logCreateSuccess(&this->memberNode->addr, false, receivedMessage->transID,
-			 				receivedMessage->key, receivedMessage->value);
-
-			 		}
-			 		else
-			 		{
-			 			log->logCreateFail(&this->memberNode->addr, false, receivedMessage->transID,
-			 				receivedMessage->key, receivedMessage->value);
-			 		}
-		 		}
-
+		 		doCreateReplyMessage(receivedMessage);
 		 		break;
 		 	}
 		 	case DELETE:
 		 	{
-		 		bool isDeleteSucc = deletekey(receivedMessage->key);
-
-		 		if(receivedMessage->transID != -1)
-		 		{
-					Message* replyMessage = new Message(receivedMessage->transID, 
-		 				this->memberNode->addr, REPLY, isDeleteSucc);
-		 			
-		 			this->emulNet->ENsend(&memberNode->addr, &receivedMessage->fromAddr, replyMessage->toString());
-
-					delete(replyMessage);	
-					if(isDeleteSucc)
-			 		{
-			 			log->logDeleteSuccess(&this->memberNode->addr, false, receivedMessage->transID,
-			 				receivedMessage->key);
-
-			 		}
-			 		else
-			 		{
-			 			log->logDeleteFail(&this->memberNode->addr, false, receivedMessage->transID,
-			 				receivedMessage->key);
-			 		}	 
-		 		}
-
+		 		doDeleteReplyMessage(receivedMessage);
 		 		break;
 		 	}
 		 	case UPDATE:
 		 	{
-		 		bool isUpdateSucc = updateKeyValue(receivedMessage->key,
-		 		 receivedMessage->value, receivedMessage->replica);
-	 			if(receivedMessage->transID != -1)
-	 			{
-		 			Message* replyMessage = new Message(receivedMessage->transID, 
-		 				this->memberNode->addr, REPLY, isUpdateSucc);
-		 			
-		 			this->emulNet->ENsend(&memberNode->addr, &receivedMessage->fromAddr, replyMessage->toString());
-
-					delete(replyMessage);
-
-			 		if(isUpdateSucc)
-			 		{
-			 			log->logUpdateSuccess(&this->memberNode->addr, false, receivedMessage->transID,
-			 				receivedMessage->key, receivedMessage->value);
-
-			 		}
-			 		else
-			 		{
-			 			log->logUpdateFail(&this->memberNode->addr, false, receivedMessage->transID,
-			 				receivedMessage->key, receivedMessage->value);
-			 		}
-			 	}
-
+				doUpdateReplyMessage(receivedMessage);
 		 		break;
 		 	}
 		 	case READ:
 		 	{
-		 		string readValue = readKey(receivedMessage->key);
-		 		if(readValue != "")
-		 		{
-		 			Entry * entry = new Entry(readValue);
-					readValue = entry->value;
-					delete entry;
-		 		}	
-
-		 		if(receivedMessage->transID != -1)
-		 		{
-					Message* replyMessage = new Message(receivedMessage->transID, 
-		 				this->memberNode->addr, readValue);
-		 			
-		 			this->emulNet->ENsend(&memberNode->addr, &receivedMessage->fromAddr, replyMessage->toString());
-
-					delete(replyMessage);	
-					if(readValue != "")
-			 		{
-			 			log->logReadSuccess(&this->memberNode->addr, false, receivedMessage->transID,
-			 				receivedMessage->key, readValue);
-
-			 		}
-			 		else
-			 		{
-			 			log->logReadFail(&this->memberNode->addr, false, receivedMessage->transID,
-			 				receivedMessage->key);
-			 		}	 
-		 		}
-
+				doReadReplyMessage(receivedMessage);
 		 		break;
 		 	}
 		 	case READREPLY:
 		 	{
-		 		if(receivedMessage->value != "")
-		 		{
-					map<int, TransInfo>::iterator search;
-					search = transIdInfo.find(receivedMessage->transID);
-					if ( search != transIdInfo.end() ) 
-					{
-						//TODD : how to solve the read conflict
-						transIdInfo[receivedMessage->transID].value = receivedMessage->value;
-						transIdInfo[receivedMessage->transID].replyTimes ++ ;
-					}
-		 		}
-
+		 		doReadReplyReplyMessage(receivedMessage);
 		 		break;	
 		 	}
 		 	case REPLY:
 		 	{
-		 		if(receivedMessage->success)
-		 		{
-		 			map<int, TransInfo>::iterator search;
-					search = transIdInfo.find(receivedMessage->transID);
-					if ( search != transIdInfo.end() ) 
-					{
-						transIdInfo[receivedMessage->transID].replyTimes ++ ;
-					}
-		 		}
-		 		
-		 		break;
+		 		doReplyReplyMessage(receivedMessage);
+			 	break;
 		 	}
 		 }
 
 		 delete(receivedMessage); 
 	}
 
-	// check coordinator reply status
-	// TODO: support rollback. Now we seem all the operation from client as a transcation
-
-	map<int, TransInfo>::iterator it;
-	for(it = this->transIdInfo.begin(); it != this->transIdInfo.end(); it++)
-	{
-		TransInfo transInfo = it->second;
-		switch(transInfo.type)
-		{
-			case CREATE:
-			{
-				if(par->globaltime -  transInfo.startTime > TIME_OUT)
-				{
-					log->logCreateFail(&this->memberNode->addr,
-						true,
-					    it->first, 
-					    transInfo.key, transInfo.value);
-					transIdInfo.erase(it->first);
-				}
-				else
-				{
-					if(transInfo.replyTimes >= 2)
-					{
-						log->logCreateSuccess(&this->memberNode->addr,
-							true, 
-							it->first,
-			 				transInfo.key, transInfo.value);
-						transIdInfo.erase(it->first);
-					}
-				}
-						
-				break;
-			}
-			case DELETE:
-			{
-				if(par->globaltime -  transInfo.startTime > TIME_OUT)
-				{
-					log->logDeleteFail(&this->memberNode->addr,
-						true,
-					    it->first, 
-					    transInfo.key);
-					transIdInfo.erase(it->first);
-				}
-				else
-				{
-					if(transInfo.replyTimes >= 2)
-					{
-						log->logDeleteSuccess(&this->memberNode->addr,
-							true, 
-							it->first,
-			 				transInfo.key);
-						transIdInfo.erase(it->first);
-					}
-				}
-
-				break;
-			}
-			case UPDATE:
-			{
-				if(par->globaltime -  transInfo.startTime > TIME_OUT)
-				{
-					log->logUpdateFail(&this->memberNode->addr,
-						true,
-					    it->first, 
-					    transInfo.key,
-					    transInfo.value);
-					transIdInfo.erase(it->first);
-				}
-				else
-				{
-					if(transInfo.replyTimes >= 2)
-					{
-						log->logUpdateSuccess(&this->memberNode->addr,
-							true, 
-							it->first,
-			 				transInfo.key,
-			 				transInfo.value);
-
-						transIdInfo.erase(it->first);
-					}
-				}
-
-				break;
-			}
-			case READ:
-			{
-				if(par->globaltime -  transInfo.startTime > TIME_OUT)
-				{
-					log->logReadFail(&this->memberNode->addr,
-						true,
-					    it->first, 
-					    transInfo.key);
-					transIdInfo.erase(it->first);
-				}
-				else
-				{
-					if(transInfo.replyTimes >= 2)
-					{
-						log->logReadSuccess(&this->memberNode->addr,
-							true, 
-							it->first,
-			 				transInfo.key,
-			 				transInfo.value);
-						transIdInfo.erase(it->first);
-					}
-				}
-
-				break;	
-			}
-		}
-		
-	}
+	// checkCoordinator reply status
+	checkCoordinatoReplyStatus();
 }
 
 /**
